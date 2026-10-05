@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Vault Quick Capture</title>
+  <title>Ignis Quick Capture</title>
   <style>
     :root {
       color-scheme: dark;
@@ -14,8 +14,6 @@
       --muted: #999;
       --accent: #7c3aed;
       --accent-hover: #6d28d9;
-      --ok: #22c55e;
-      --err: #ef4444;
       font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     }
     * { box-sizing: border-box; }
@@ -44,7 +42,6 @@
       margin-bottom: 0.35rem;
     }
     input[type="text"],
-    input[type="password"],
     textarea {
       width: 100%;
       background: var(--surface);
@@ -125,21 +122,21 @@
 </head>
 <body>
   <div class="wrap">
-    <h1>Vault Quick Capture</h1>
+    <h1>Ignis Quick Capture</h1>
     <p class="sub">
-      Sla notities op in je Obsidian-vault via SSH/SFTP op de server — geen Ignis API of CORS nodig.
-      Start de Node-server (<code>npm start</code>) en open deze pagina via die server.
+      Notities opslaan in je Obsidian-vault via Ignis. Deze container proxy't
+      <code>/ignis-api/</code> naar Ignis — geen CORS in de browser.
     </p>
 
     <details>
-      <summary>Instellingen (browser)</summary>
+      <summary>Instellingen</summary>
+      <div class="field">
+        <label for="vaultId">Vault</label>
+        <input type="text" id="vaultId" value="My Vault" autocomplete="off" />
+      </div>
       <div class="field">
         <label for="folder">Map in vault</label>
         <input type="text" id="folder" value="Inbox" autocomplete="off" />
-      </div>
-      <div class="field">
-        <label for="apiToken">API-token (alleen als CAPTURE_API_TOKEN op de server staat)</label>
-        <input type="password" id="apiToken" autocomplete="off" />
       </div>
     </details>
 
@@ -155,24 +152,24 @@
     <div class="row">
       <button type="button" class="primary" id="btnSave">Opslaan</button>
       <button type="button" class="secondary" id="btnTest">Testnotitie</button>
-      <button type="button" class="secondary" id="btnPing">SSH-test</button>
+      <button type="button" class="secondary" id="btnPing">Verbinding</button>
     </div>
 
     <div id="status" class="status" role="status"></div>
 
     <p class="hint">
-      SSH-host, gebruiker, key en <code>VAULT_PATH</code> staan in <code>.env</code> op de server
-      (zie <code>.env.example</code>). Typisch Ignis-pad op de host:
-      <code>.../vaults/My Vault</code>.
+      Ignis-URL staat in <code>IGNIS_UPSTREAM</code> (docker compose / <code>.env</code>).
+      Bij self-signed certificaat op Ignis: nginx gebruikt <code>proxy_ssl_verify off</code>.
     </p>
   </div>
 
   <script>
-    const STORAGE_KEY = "vault-quick-capture-settings";
+    const STORAGE_KEY = "ignis-quick-capture-settings";
+    const API_PREFIX = "/ignis-api";
 
     const els = {
+      vaultId: document.getElementById("vaultId"),
       folder: document.getElementById("folder"),
-      apiToken: document.getElementById("apiToken"),
       title: document.getElementById("title"),
       body: document.getElementById("body"),
       status: document.getElementById("status"),
@@ -184,8 +181,8 @@
     function loadSettings() {
       try {
         const s = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+        if (s.vaultId) els.vaultId.value = s.vaultId;
         if (s.folder !== undefined) els.folder.value = s.folder;
-        if (s.apiToken) els.apiToken.value = s.apiToken;
       } catch (_) {}
     }
 
@@ -193,13 +190,13 @@
       localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({
+          vaultId: els.vaultId.value.trim(),
           folder: els.folder.value.trim(),
-          apiToken: els.apiToken.value,
         }),
       );
     }
 
-    ["folder", "apiToken"].forEach((id) => {
+    ["vaultId", "folder"].forEach((id) => {
       els[id].addEventListener("change", saveSettings);
     });
 
@@ -213,14 +210,19 @@
       els.status.textContent = "";
     }
 
-    function apiHeaders() {
-      const h = { "Content-Type": "application/json" };
-      const token = els.apiToken.value.trim();
-      if (token) h["X-Capture-Token"] = token;
-      return h;
+    function apiUrl(apiPath) {
+      const sub = apiPath.replace(/^\/api/, "");
+      return API_PREFIX + sub;
     }
 
-    async function parseResponse(res) {
+    async function postJson(path, body) {
+      const vault = els.vaultId.value.trim();
+      const res = await fetch(apiUrl(path), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vault, ...body }),
+        credentials: "same-origin",
+      });
       const text = await res.text();
       let data;
       try {
@@ -233,23 +235,68 @@
           data.error ||
           data.message ||
           (typeof data.raw === "string" ? data.raw : null) ||
-          res.statusText;
+          res.statusText ||
+          "Request mislukt";
         throw new Error(`HTTP ${res.status}: ${msg}`);
       }
       return data;
     }
 
-    async function saveNote(title, body) {
-      const res = await fetch("/api/notes", {
-        method: "POST",
-        headers: apiHeaders(),
-        body: JSON.stringify({
-          title,
-          body,
-          folder: els.folder.value.trim(),
-        }),
-      });
-      return parseResponse(res);
+    function pad(n) {
+      return String(n).padStart(2, "0");
+    }
+
+    function timestampSlug() {
+      const d = new Date();
+      return (
+        d.getFullYear() +
+        "-" +
+        pad(d.getMonth() + 1) +
+        "-" +
+        pad(d.getDate()) +
+        " " +
+        pad(d.getHours()) +
+        pad(d.getMinutes()) +
+        pad(d.getSeconds())
+      );
+    }
+
+    function slugify(title) {
+      const t = title.trim() || "notitie";
+      const cleaned = t
+        .replace(/[/\\:*?"<>|]/g, "-")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 80);
+      return cleaned || "notitie";
+    }
+
+    function buildPath(filename) {
+      const folder = els.folder.value.trim().replace(/^\/+|\/+$/g, "");
+      return folder ? folder + "/" + filename : filename;
+    }
+
+    function buildMarkdown(title, body) {
+      const now = new Date().toISOString();
+      return [
+        "---",
+        "created: " + now,
+        "source: ignis-quick-capture",
+        "---",
+        "",
+        "# " + (title.trim() || "Notitie"),
+        "",
+        body.trim(),
+        "",
+      ].join("\n");
+    }
+
+    async function writeNote(title, body) {
+      const filename = timestampSlug() + " " + slugify(title) + ".md";
+      const path = buildPath(filename);
+      const content = buildMarkdown(title, body);
+      await postJson("/api/fs/writeFile", { path, content });
+      return { path };
     }
 
     function setBusy(busy) {
@@ -267,8 +314,8 @@
       }
       setBusy(true);
       try {
-        const data = await saveNote(els.title.value, els.body.value);
-        setStatus("ok", "Opgeslagen als: " + data.path);
+        const { path } = await writeNote(els.title.value, els.body.value);
+        setStatus("ok", "Opgeslagen als: " + path);
         els.body.value = "";
         els.title.value = "";
         els.title.focus();
@@ -284,13 +331,13 @@
       saveSettings();
       setBusy(true);
       try {
-        const data = await saveNote(
-          "SSH test",
+        const { path } = await writeNote(
+          "Ignis test",
           "Automatische testnotitie.\n\nAangemaakt: " +
             new Date().toLocaleString("nl-NL") +
             "\n",
         );
-        setStatus("ok", "Testnotitie opgeslagen: " + data.path);
+        setStatus("ok", "Testnotitie opgeslagen: " + path);
       } catch (e) {
         setStatus("err", e.message || String(e));
       } finally {
@@ -303,14 +350,36 @@
       saveSettings();
       setBusy(true);
       try {
-        const res = await fetch("/api/connection", { headers: apiHeaders() });
-        const data = await parseResponse(res);
-        setStatus("ok", data.message || "Verbinding OK");
+        const versionRes = await fetch(apiUrl("/api/version"), { credentials: "same-origin" });
+        if (!versionRes.ok) throw new Error("Versie-endpoint: HTTP " + versionRes.status);
+        const version = await versionRes.json();
+
+        const listRes = await fetch(apiUrl("/api/vault/list"), { credentials: "same-origin" });
+        if (!listRes.ok) throw new Error("Vault-lijst: HTTP " + listRes.status);
+        const vaults = await listRes.json();
+
+        const vault = els.vaultId.value.trim();
+        const found = Array.isArray(vaults) && vaults.some((v) => v.id === vault);
+        const ignisVer = version.ignis || version.version || "?";
+        const obsVer = version.obsidian || version.obsidianVersion || "?";
+
+        setStatus(
+          found ? "ok" : "info",
+          "Verbonden. Ignis " +
+            ignisVer +
+            ", Obsidian " +
+            obsVer +
+            '. Vault "' +
+            vault +
+            '": ' +
+            (found ? "gevonden" : "niet in lijst — controleer de naam") +
+            ".",
+        );
       } catch (e) {
         setStatus(
           "err",
           (e.message || String(e)) +
-            " — draait npm start? Klopt .env (SSH_USER, key, VAULT_PATH)?",
+            " — controleer IGNIS_UPSTREAM en of Ignis bereikbaar is vanuit de container.",
         );
       } finally {
         setBusy(false);
@@ -320,7 +389,6 @@
     els.btnSave.addEventListener("click", onSave);
     els.btnTest.addEventListener("click", onTest);
     els.btnPing.addEventListener("click", onPing);
-
     loadSettings();
   </script>
 </body>

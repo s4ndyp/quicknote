@@ -1,0 +1,10 @@
+FROM nginx:1.27-alpine
+
+RUN rm /etc/nginx/conf.d/default.conf
+
+COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
+COPY public/index.html /usr/share/nginx/html/index.html
+
+ENV IGNIS_UPSTREAM=https://10.5.0.134
+
+EXPOSE 80
