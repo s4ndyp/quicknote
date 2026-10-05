@@ -14,9 +14,6 @@
       --muted: #999;
       --accent: #7c3aed;
       --accent-hover: #6d28d9;
-      --ok: #22c55e;
-      --err: #ef4444;
-      --warn: #f59e0b;
       font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     }
     * { box-sizing: border-box; }
@@ -32,11 +29,7 @@
       margin: 0 auto;
       padding: 1.25rem 1rem 2rem;
     }
-    h1 {
-      font-size: 1.35rem;
-      font-weight: 600;
-      margin: 0 0 0.25rem;
-    }
+    h1 { font-size: 1.35rem; font-weight: 600; margin: 0 0 0.25rem; }
     .sub {
       color: var(--muted);
       font-size: 0.875rem;
@@ -49,7 +42,6 @@
       margin-bottom: 0.35rem;
     }
     input[type="text"],
-    input[type="url"],
     textarea {
       width: 100%;
       background: var(--surface);
@@ -59,10 +51,7 @@
       padding: 0.65rem 0.75rem;
       font: inherit;
     }
-    textarea {
-      min-height: 8rem;
-      resize: vertical;
-    }
+    textarea { min-height: 8rem; resize: vertical; }
     input:focus, textarea:focus {
       outline: 2px solid var(--accent);
       outline-offset: 0;
@@ -134,21 +123,20 @@
 <body>
   <div class="wrap">
     <h1>Ignis Quick Capture</h1>
-    <p class="sub">Sla een notitie op in je Obsidian-vault via de Ignis API — zonder Obsidian te openen.</p>
+    <p class="sub">
+      Notities opslaan in je Obsidian-vault via Ignis. Deze container proxy't
+      <code>/ignis-api/</code> naar Ignis — geen CORS in de browser.
+    </p>
 
     <details>
       <summary>Instellingen</summary>
-      <div class="field">
-        <label for="ignisUrl">Ignis URL</label>
-        <input type="url" id="ignisUrl" value="https://10.5.0.134" autocomplete="off" />
-      </div>
       <div class="field">
         <label for="vaultId">Vault</label>
         <input type="text" id="vaultId" value="My Vault" autocomplete="off" />
       </div>
       <div class="field">
-        <label for="folder">Map in vault (optioneel)</label>
-        <input type="text" id="folder" value="Inbox" placeholder="bijv. Inbox" autocomplete="off" />
+        <label for="folder">Map in vault</label>
+        <input type="text" id="folder" value="Inbox" autocomplete="off" />
       </div>
     </details>
 
@@ -170,18 +158,16 @@
     <div id="status" class="status" role="status"></div>
 
     <p class="hint">
-      Tip: open deze pagina op het <strong>zelfde adres</strong> als Ignis (bijv. serveer
-      <code>index.html</code> via je reverse proxy op <code>https://10.5.0.134/</code>), zodat
-      de browser geen CORS-blokkade geeft. Vanaf <code>file://</code> werkt het alleen als Ignis
-      cross-origin requests toestaat.
+      Ignis-URL staat in <code>IGNIS_UPSTREAM</code> (docker compose / <code>.env</code>).
+      Bij self-signed certificaat op Ignis: nginx gebruikt <code>proxy_ssl_verify off</code>.
     </p>
   </div>
 
   <script>
     const STORAGE_KEY = "ignis-quick-capture-settings";
+    const API_PREFIX = "/ignis-api";
 
     const els = {
-      ignisUrl: document.getElementById("ignisUrl"),
       vaultId: document.getElementById("vaultId"),
       folder: document.getElementById("folder"),
       title: document.getElementById("title"),
@@ -194,10 +180,7 @@
 
     function loadSettings() {
       try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) return;
-        const s = JSON.parse(raw);
-        if (s.ignisUrl) els.ignisUrl.value = s.ignisUrl;
+        const s = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
         if (s.vaultId) els.vaultId.value = s.vaultId;
         if (s.folder !== undefined) els.folder.value = s.folder;
       } catch (_) {}
@@ -207,14 +190,13 @@
       localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({
-          ignisUrl: els.ignisUrl.value.trim(),
           vaultId: els.vaultId.value.trim(),
           folder: els.folder.value.trim(),
         }),
       );
     }
 
-    ["ignisUrl", "vaultId", "folder"].forEach((id) => {
+    ["vaultId", "folder"].forEach((id) => {
       els[id].addEventListener("change", saveSettings);
     });
 
@@ -228,22 +210,9 @@
       els.status.textContent = "";
     }
 
-    /** Base URL for API calls; empty string = same origin (relative /api/...). */
-    function resolveApiBase() {
-      const configured = els.ignisUrl.value.trim().replace(/\/+$/, "");
-      if (!configured) return "";
-      if (location.protocol === "file:") return configured;
-      try {
-        const u = new URL(configured);
-        if (u.origin === location.origin) return "";
-      } catch (_) {}
-      return configured;
-    }
-
-    function apiUrl(path) {
-      const base = resolveApiBase();
-      const p = path.startsWith("/") ? path : "/" + path;
-      return base ? base + p : p;
+    function apiUrl(apiPath) {
+      const sub = apiPath.replace(/^\/api/, "");
+      return API_PREFIX + sub;
     }
 
     async function postJson(path, body) {
@@ -309,7 +278,7 @@
 
     function buildMarkdown(title, body) {
       const now = new Date().toISOString();
-      const lines = [
+      return [
         "---",
         "created: " + now,
         "source: ignis-quick-capture",
@@ -319,16 +288,15 @@
         "",
         body.trim(),
         "",
-      ];
-      return lines.join("\n");
+      ].join("\n");
     }
 
     async function writeNote(title, body) {
       const filename = timestampSlug() + " " + slugify(title) + ".md";
       const path = buildPath(filename);
       const content = buildMarkdown(title, body);
-      const result = await postJson("/api/fs/writeFile", { path, content });
-      return { path, result };
+      await postJson("/api/fs/writeFile", { path, content });
+      return { path };
     }
 
     function setBusy(busy) {
@@ -340,15 +308,13 @@
     async function onSave() {
       clearStatus();
       saveSettings();
-      const title = els.title.value;
-      const body = els.body.value;
-      if (!body.trim() && !title.trim()) {
+      if (!els.body.value.trim() && !els.title.value.trim()) {
         setStatus("err", "Vul minimaal een titel of inhoud in.");
         return;
       }
       setBusy(true);
       try {
-        const { path } = await writeNote(title, body);
+        const { path } = await writeNote(els.title.value, els.body.value);
         setStatus("ok", "Opgeslagen als: " + path);
         els.body.value = "";
         els.title.value = "";
@@ -364,13 +330,13 @@
       clearStatus();
       saveSettings();
       setBusy(true);
-      const title = "Ignis test";
-      const body =
-        "Dit is een automatische testnotitie.\n\nAangemaakt: " +
-        new Date().toLocaleString("nl-NL") +
-        "\n";
       try {
-        const { path } = await writeNote(title, body);
+        const { path } = await writeNote(
+          "Ignis test",
+          "Automatische testnotitie.\n\nAangemaakt: " +
+            new Date().toLocaleString("nl-NL") +
+            "\n",
+        );
         setStatus("ok", "Testnotitie opgeslagen: " + path);
       } catch (e) {
         setStatus("err", e.message || String(e));
@@ -385,7 +351,7 @@
       setBusy(true);
       try {
         const versionRes = await fetch(apiUrl("/api/version"), { credentials: "same-origin" });
-        if (!versionRes.ok) throw new Error("Versie-endpoint: HTTP " + versionRes.version);
+        if (!versionRes.ok) throw new Error("Versie-endpoint: HTTP " + versionRes.status);
         const version = await versionRes.json();
 
         const listRes = await fetch(apiUrl("/api/vault/list"), { credentials: "same-origin" });
@@ -394,7 +360,6 @@
 
         const vault = els.vaultId.value.trim();
         const found = Array.isArray(vaults) && vaults.some((v) => v.id === vault);
-
         const ignisVer = version.ignis || version.version || "?";
         const obsVer = version.obsidian || version.obsidianVersion || "?";
 
@@ -404,9 +369,9 @@
             ignisVer +
             ", Obsidian " +
             obsVer +
-            ". Vault \"" +
+            '. Vault "' +
             vault +
-            "\": " +
+            '": ' +
             (found ? "gevonden" : "niet in lijst — controleer de naam") +
             ".",
         );
@@ -414,7 +379,7 @@
         setStatus(
           "err",
           (e.message || String(e)) +
-            " — controleer URL, netwerk en of deze pagina same-origin met Ignis draait.",
+            " — controleer IGNIS_UPSTREAM en of Ignis bereikbaar is vanuit de container.",
         );
       } finally {
         setBusy(false);
@@ -424,7 +389,6 @@
     els.btnSave.addEventListener("click", onSave);
     els.btnTest.addEventListener("click", onTest);
     els.btnPing.addEventListener("click", onPing);
-
     loadSettings();
   </script>
 </body>
