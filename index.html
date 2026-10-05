@@ -50,6 +50,7 @@
     }
     input[type="text"],
     input[type="url"],
+    select,
     textarea {
       width: 100%;
       background: var(--surface);
@@ -129,6 +130,17 @@
       line-height: 1.45;
     }
     code { font-size: 0.85em; background: #333; padding: 0.1em 0.35em; border-radius: 4px; }
+    pre {
+      background: #141414;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.65rem 0.75rem;
+      overflow-x: auto;
+      font-size: 0.7rem;
+      line-height: 1.4;
+      margin: 0.5rem 0 0;
+    }
+    .hint strong { color: var(--text); font-weight: 600; }
   </style>
 </head>
 <body>
@@ -136,10 +148,21 @@
     <h1>Ignis Quick Capture</h1>
     <p class="sub">Sla een notitie op in je Obsidian-vault via de Ignis API — zonder Obsidian te openen.</p>
 
-    <details>
+    <details open>
       <summary>Instellingen</summary>
       <div class="field">
-        <label for="ignisUrl">Ignis URL</label>
+        <label for="apiMode">API-verbinding</label>
+        <select id="apiMode">
+          <option value="proxy">Via proxy op deze server (geen CORS)</option>
+          <option value="direct">Rechtstreeks naar Ignis</option>
+        </select>
+      </div>
+      <div class="field" id="proxyPrefixField">
+        <label for="proxyPrefix">Proxy-pad op deze server</label>
+        <input type="text" id="proxyPrefix" value="/ignis-api" autocomplete="off" />
+      </div>
+      <div class="field" id="ignisUrlField">
+        <label for="ignisUrl">Ignis URL (doel van de proxy, of direct)</label>
         <input type="url" id="ignisUrl" value="https://10.5.0.134" autocomplete="off" />
       </div>
       <div class="field">
@@ -169,18 +192,46 @@
 
     <div id="status" class="status" role="status"></div>
 
-    <p class="hint">
-      Tip: open deze pagina op het <strong>zelfde adres</strong> als Ignis (bijv. serveer
-      <code>index.html</code> via je reverse proxy op <code>https://10.5.0.134/</code>), zodat
-      de browser geen CORS-blokkade geeft. Vanaf <code>file://</code> werkt het alleen als Ignis
-      cross-origin requests toestaat.
-    </p>
+    <details class="hint">
+      <summary><strong>CORS: pagina op een andere server</strong></summary>
+      <p style="margin: 0.5rem 0 0">
+        Ignis stuurt standaard geen <code>Access-Control-Allow-Origin</code>-headers. Een
+        browser blokkeert dan directe calls vanaf een andere origin. Dat los je op server-side op
+        (niet in JavaScript alleen).
+      </p>
+      <p style="margin: 0.75rem 0 0"><strong>Optie A — proxy op de server van deze pagina</strong> (aanbevolen)</p>
+      <p style="margin: 0.35rem 0 0">
+        Zet API-verbinding op <em>Via proxy</em> en configureer je webserver zodat
+        <code>/ignis-api/</code> doorstuurt naar Ignis <code>/api/</code>:
+      </p>
+      <p style="margin: 0.35rem 0 0; color: var(--muted)">Nginx:</p>
+      <pre>location /ignis-api/ {
+    proxy_pass https://10.5.0.134/api/;
+    proxy_ssl_verify off;
+    proxy_set_header Host $host;
+}</pre>
+      <p style="margin: 0.35rem 0 0; color: var(--muted)">Caddy:</p>
+      <pre>handle_path /ignis-api/* {
+    rewrite * /api{path}
+    reverse_proxy https://10.5.0.134
+}</pre>
+      <p style="margin: 0.75rem 0 0"><strong>Optie B — CORS vóór Ignis</strong></p>
+      <p style="margin: 0.35rem 0 0">
+        Op de reverse proxy van Ignis: voeg voor <code>/api/</code> headers toe met jouw capture-origin
+        (exacte URL, geen <code>*</code> als je cookies gebruikt). Handel <code>OPTIONS</code> af met 204.
+        Daarna werkt modus <em>Rechtstreeks naar Ignis</em>.
+      </p>
+    </details>
   </div>
 
   <script>
     const STORAGE_KEY = "ignis-quick-capture-settings";
 
     const els = {
+      apiMode: document.getElementById("apiMode"),
+      proxyPrefix: document.getElementById("proxyPrefix"),
+      proxyPrefixField: document.getElementById("proxyPrefixField"),
+      ignisUrlField: document.getElementById("ignisUrlField"),
       ignisUrl: document.getElementById("ignisUrl"),
       vaultId: document.getElementById("vaultId"),
       folder: document.getElementById("folder"),
@@ -197,16 +248,21 @@
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return;
         const s = JSON.parse(raw);
+        if (s.apiMode) els.apiMode.value = s.apiMode;
+        if (s.proxyPrefix) els.proxyPrefix.value = s.proxyPrefix;
         if (s.ignisUrl) els.ignisUrl.value = s.ignisUrl;
         if (s.vaultId) els.vaultId.value = s.vaultId;
         if (s.folder !== undefined) els.folder.value = s.folder;
       } catch (_) {}
+      syncModeUi();
     }
 
     function saveSettings() {
       localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({
+          apiMode: els.apiMode.value,
+          proxyPrefix: els.proxyPrefix.value.trim(),
           ignisUrl: els.ignisUrl.value.trim(),
           vaultId: els.vaultId.value.trim(),
           folder: els.folder.value.trim(),
@@ -214,8 +270,19 @@
       );
     }
 
-    ["ignisUrl", "vaultId", "folder"].forEach((id) => {
-      els[id].addEventListener("change", saveSettings);
+    function syncModeUi() {
+      const proxy = els.apiMode.value === "proxy";
+      els.proxyPrefixField.hidden = !proxy;
+      els.ignisUrlField.querySelector("label").textContent = proxy
+        ? "Ignis URL (alleen ter referentie in deze UI)"
+        : "Ignis URL (doel van de proxy, of direct)";
+    }
+
+    ["apiMode", "proxyPrefix", "ignisUrl", "vaultId", "folder"].forEach((id) => {
+      els[id].addEventListener("change", () => {
+        saveSettings();
+        syncModeUi();
+      });
     });
 
     function setStatus(kind, message) {
@@ -228,22 +295,38 @@
       els.status.textContent = "";
     }
 
-    /** Base URL for API calls; empty string = same origin (relative /api/...). */
-    function resolveApiBase() {
-      const configured = els.ignisUrl.value.trim().replace(/\/+$/, "");
-      if (!configured) return "";
-      if (location.protocol === "file:") return configured;
-      try {
-        const u = new URL(configured);
-        if (u.origin === location.origin) return "";
-      } catch (_) {}
-      return configured;
+    function isProxyMode() {
+      return els.apiMode.value === "proxy";
     }
 
+    function normalizeProxyPrefix() {
+      let p = els.proxyPrefix.value.trim() || "/ignis-api";
+      if (!p.startsWith("/")) p = "/" + p;
+      return p.replace(/\/+$/, "");
+    }
+
+    /** Build full URL for an Ignis route like /api/fs/writeFile */
     function apiUrl(path) {
-      const base = resolveApiBase();
-      const p = path.startsWith("/") ? path : "/" + path;
-      return base ? base + p : p;
+      const apiPath = path.startsWith("/") ? path : "/" + path;
+      if (isProxyMode()) {
+        if (location.protocol === "file:") {
+          throw new Error("Proxy-modus werkt niet vanaf file:// — serveer deze pagina via HTTP(S).");
+        }
+        const sub = apiPath.replace(/^\/api/, "");
+        return normalizeProxyPrefix() + sub;
+      }
+
+      const configured = els.ignisUrl.value.trim().replace(/\/+$/, "");
+      if (!configured) return apiPath;
+      if (location.protocol === "file:") return configured + apiPath;
+      try {
+        if (new URL(configured).origin === location.origin) return apiPath;
+      } catch (_) {}
+      return configured + apiPath;
+    }
+
+    function fetchCredentials() {
+      return isProxyMode() ? "same-origin" : "include";
     }
 
     async function postJson(path, body) {
@@ -252,7 +335,7 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ vault, ...body }),
-        credentials: "same-origin",
+        credentials: fetchCredentials(),
       });
       const text = await res.text();
       let data;
@@ -384,11 +467,15 @@
       saveSettings();
       setBusy(true);
       try {
-        const versionRes = await fetch(apiUrl("/api/version"), { credentials: "same-origin" });
-        if (!versionRes.ok) throw new Error("Versie-endpoint: HTTP " + versionRes.version);
+        const versionRes = await fetch(apiUrl("/api/version"), {
+          credentials: fetchCredentials(),
+        });
+        if (!versionRes.ok) throw new Error("Versie-endpoint: HTTP " + versionRes.status);
         const version = await versionRes.json();
 
-        const listRes = await fetch(apiUrl("/api/vault/list"), { credentials: "same-origin" });
+        const listRes = await fetch(apiUrl("/api/vault/list"), {
+          credentials: fetchCredentials(),
+        });
         if (!listRes.ok) throw new Error("Vault-lijst: HTTP " + listRes.status);
         const vaults = await listRes.json();
 
@@ -414,7 +501,9 @@
         setStatus(
           "err",
           (e.message || String(e)) +
-            " — controleer URL, netwerk en of deze pagina same-origin met Ignis draait.",
+            (isProxyMode()
+              ? " — controleer of /ignis-api/ op deze server naar Ignis /api/ proxy't."
+              : " — CORS? Gebruik proxy-modus of voeg CORS-headers toe vóór Ignis."),
         );
       } finally {
         setBusy(false);
