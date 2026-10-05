@@ -1,1 +1,431 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ignis Quick Capture</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #1e1e1e;
+      --surface: #262626;
+      --border: #3d3d3d;
+      --text: #dcddde;
+      --muted: #999;
+      --accent: #7c3aed;
+      --accent-hover: #6d28d9;
+      --ok: #22c55e;
+      --err: #ef4444;
+      --warn: #f59e0b;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .wrap {
+      max-width: 32rem;
+      margin: 0 auto;
+      padding: 1.25rem 1rem 2rem;
+    }
+    h1 {
+      font-size: 1.35rem;
+      font-weight: 600;
+      margin: 0 0 0.25rem;
+    }
+    .sub {
+      color: var(--muted);
+      font-size: 0.875rem;
+      margin-bottom: 1.25rem;
+    }
+    label {
+      display: block;
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+    input[type="text"],
+    input[type="url"],
+    textarea {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 0.65rem 0.75rem;
+      font: inherit;
+    }
+    textarea {
+      min-height: 8rem;
+      resize: vertical;
+    }
+    input:focus, textarea:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: 0;
+      border-color: transparent;
+    }
+    .field { margin-bottom: 1rem; }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+    button {
+      font: inherit;
+      cursor: pointer;
+      border: none;
+      border-radius: 8px;
+      padding: 0.65rem 1rem;
+      font-weight: 500;
+    }
+    .primary {
+      background: var(--accent);
+      color: #fff;
+      flex: 1;
+      min-width: 8rem;
+    }
+    .primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .secondary {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .secondary:hover:not(:disabled) { border-color: var(--muted); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    details {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.5rem 0.75rem;
+      margin-bottom: 1rem;
+      font-size: 0.875rem;
+    }
+    summary {
+      cursor: pointer;
+      color: var(--muted);
+      user-select: none;
+    }
+    details[open] summary { margin-bottom: 0.75rem; }
+    .status {
+      margin-top: 1rem;
+      padding: 0.75rem;
+      border-radius: 8px;
+      font-size: 0.875rem;
+      display: none;
+    }
+    .status.show { display: block; }
+    .status.ok { background: rgba(34, 197, 94, 0.12); border: 1px solid rgba(34, 197, 94, 0.35); }
+    .status.err { background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); }
+    .status.info { background: rgba(124, 58, 237, 0.12); border: 1px solid rgba(124, 58, 237, 0.35); }
+    .hint {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 1.25rem;
+      line-height: 1.45;
+    }
+    code { font-size: 0.85em; background: #333; padding: 0.1em 0.35em; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Ignis Quick Capture</h1>
+    <p class="sub">Sla een notitie op in je Obsidian-vault via de Ignis API — zonder Obsidian te openen.</p>
 
+    <details>
+      <summary>Instellingen</summary>
+      <div class="field">
+        <label for="ignisUrl">Ignis URL</label>
+        <input type="url" id="ignisUrl" value="https://10.5.0.134" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="vaultId">Vault</label>
+        <input type="text" id="vaultId" value="My Vault" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="folder">Map in vault (optioneel)</label>
+        <input type="text" id="folder" value="Inbox" placeholder="bijv. Inbox" autocomplete="off" />
+      </div>
+    </details>
+
+    <div class="field">
+      <label for="title">Titel</label>
+      <input type="text" id="title" placeholder="Onderwerp van de notitie" />
+    </div>
+    <div class="field">
+      <label for="body">Inhoud</label>
+      <textarea id="body" placeholder="Wat wil je onthouden?"></textarea>
+    </div>
+
+    <div class="row">
+      <button type="button" class="primary" id="btnSave">Opslaan</button>
+      <button type="button" class="secondary" id="btnTest">Testnotitie</button>
+      <button type="button" class="secondary" id="btnPing">Verbinding</button>
+    </div>
+
+    <div id="status" class="status" role="status"></div>
+
+    <p class="hint">
+      Tip: open deze pagina op het <strong>zelfde adres</strong> als Ignis (bijv. serveer
+      <code>index.html</code> via je reverse proxy op <code>https://10.5.0.134/</code>), zodat
+      de browser geen CORS-blokkade geeft. Vanaf <code>file://</code> werkt het alleen als Ignis
+      cross-origin requests toestaat.
+    </p>
+  </div>
+
+  <script>
+    const STORAGE_KEY = "ignis-quick-capture-settings";
+
+    const els = {
+      ignisUrl: document.getElementById("ignisUrl"),
+      vaultId: document.getElementById("vaultId"),
+      folder: document.getElementById("folder"),
+      title: document.getElementById("title"),
+      body: document.getElementById("body"),
+      status: document.getElementById("status"),
+      btnSave: document.getElementById("btnSave"),
+      btnTest: document.getElementById("btnTest"),
+      btnPing: document.getElementById("btnPing"),
+    };
+
+    function loadSettings() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+        const s = JSON.parse(raw);
+        if (s.ignisUrl) els.ignisUrl.value = s.ignisUrl;
+        if (s.vaultId) els.vaultId.value = s.vaultId;
+        if (s.folder !== undefined) els.folder.value = s.folder;
+      } catch (_) {}
+    }
+
+    function saveSettings() {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          ignisUrl: els.ignisUrl.value.trim(),
+          vaultId: els.vaultId.value.trim(),
+          folder: els.folder.value.trim(),
+        }),
+      );
+    }
+
+    ["ignisUrl", "vaultId", "folder"].forEach((id) => {
+      els[id].addEventListener("change", saveSettings);
+    });
+
+    function setStatus(kind, message) {
+      els.status.className = "status show " + kind;
+      els.status.textContent = message;
+    }
+
+    function clearStatus() {
+      els.status.className = "status";
+      els.status.textContent = "";
+    }
+
+    /** Base URL for API calls; empty string = same origin (relative /api/...). */
+    function resolveApiBase() {
+      const configured = els.ignisUrl.value.trim().replace(/\/+$/, "");
+      if (!configured) return "";
+      if (location.protocol === "file:") return configured;
+      try {
+        const u = new URL(configured);
+        if (u.origin === location.origin) return "";
+      } catch (_) {}
+      return configured;
+    }
+
+    function apiUrl(path) {
+      const base = resolveApiBase();
+      const p = path.startsWith("/") ? path : "/" + path;
+      return base ? base + p : p;
+    }
+
+    async function postJson(path, body) {
+      const vault = els.vaultId.value.trim();
+      const res = await fetch(apiUrl(path), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vault, ...body }),
+        credentials: "same-origin",
+      });
+      const text = await res.text();
+      let data;
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = { raw: text };
+      }
+      if (!res.ok) {
+        const msg =
+          data.error ||
+          data.message ||
+          (typeof data.raw === "string" ? data.raw : null) ||
+          res.statusText ||
+          "Request mislukt";
+        throw new Error(`HTTP ${res.status}: ${msg}`);
+      }
+      return data;
+    }
+
+    function pad(n) {
+      return String(n).padStart(2, "0");
+    }
+
+    function timestampSlug() {
+      const d = new Date();
+      return (
+        d.getFullYear() +
+        "-" +
+        pad(d.getMonth() + 1) +
+        "-" +
+        pad(d.getDate()) +
+        " " +
+        pad(d.getHours()) +
+        pad(d.getMinutes()) +
+        pad(d.getSeconds())
+      );
+    }
+
+    function slugify(title) {
+      const t = title.trim() || "notitie";
+      const cleaned = t
+        .replace(/[/\\:*?"<>|]/g, "-")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 80);
+      return cleaned || "notitie";
+    }
+
+    function buildPath(filename) {
+      const folder = els.folder.value.trim().replace(/^\/+|\/+$/g, "");
+      return folder ? folder + "/" + filename : filename;
+    }
+
+    function buildMarkdown(title, body) {
+      const now = new Date().toISOString();
+      const lines = [
+        "---",
+        "created: " + now,
+        "source: ignis-quick-capture",
+        "---",
+        "",
+        "# " + (title.trim() || "Notitie"),
+        "",
+        body.trim(),
+        "",
+      ];
+      return lines.join("\n");
+    }
+
+    async function writeNote(title, body) {
+      const filename = timestampSlug() + " " + slugify(title) + ".md";
+      const path = buildPath(filename);
+      const content = buildMarkdown(title, body);
+      const result = await postJson("/api/fs/writeFile", { path, content });
+      return { path, result };
+    }
+
+    function setBusy(busy) {
+      els.btnSave.disabled = busy;
+      els.btnTest.disabled = busy;
+      els.btnPing.disabled = busy;
+    }
+
+    async function onSave() {
+      clearStatus();
+      saveSettings();
+      const title = els.title.value;
+      const body = els.body.value;
+      if (!body.trim() && !title.trim()) {
+        setStatus("err", "Vul minimaal een titel of inhoud in.");
+        return;
+      }
+      setBusy(true);
+      try {
+        const { path } = await writeNote(title, body);
+        setStatus("ok", "Opgeslagen als: " + path);
+        els.body.value = "";
+        els.title.value = "";
+        els.title.focus();
+      } catch (e) {
+        setStatus("err", e.message || String(e));
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function onTest() {
+      clearStatus();
+      saveSettings();
+      setBusy(true);
+      const title = "Ignis test";
+      const body =
+        "Dit is een automatische testnotitie.\n\nAangemaakt: " +
+        new Date().toLocaleString("nl-NL") +
+        "\n";
+      try {
+        const { path } = await writeNote(title, body);
+        setStatus("ok", "Testnotitie opgeslagen: " + path);
+      } catch (e) {
+        setStatus("err", e.message || String(e));
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function onPing() {
+      clearStatus();
+      saveSettings();
+      setBusy(true);
+      try {
+        const versionRes = await fetch(apiUrl("/api/version"), { credentials: "same-origin" });
+        if (!versionRes.ok) throw new Error("Versie-endpoint: HTTP " + versionRes.version);
+        const version = await versionRes.json();
+
+        const listRes = await fetch(apiUrl("/api/vault/list"), { credentials: "same-origin" });
+        if (!listRes.ok) throw new Error("Vault-lijst: HTTP " + listRes.status);
+        const vaults = await listRes.json();
+
+        const vault = els.vaultId.value.trim();
+        const found = Array.isArray(vaults) && vaults.some((v) => v.id === vault);
+
+        const ignisVer = version.ignis || version.version || "?";
+        const obsVer = version.obsidian || version.obsidianVersion || "?";
+
+        setStatus(
+          found ? "ok" : "info",
+          "Verbonden. Ignis " +
+            ignisVer +
+            ", Obsidian " +
+            obsVer +
+            ". Vault \"" +
+            vault +
+            "\": " +
+            (found ? "gevonden" : "niet in lijst — controleer de naam") +
+            ".",
+        );
+      } catch (e) {
+        setStatus(
+          "err",
+          (e.message || String(e)) +
+            " — controleer URL, netwerk en of deze pagina same-origin met Ignis draait.",
+        );
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    els.btnSave.addEventListener("click", onSave);
+    els.btnTest.addEventListener("click", onTest);
+    els.btnPing.addEventListener("click", onPing);
+
+    loadSettings();
+  </script>
+</body>
+</html>
