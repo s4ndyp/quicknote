@@ -246,7 +246,7 @@
       return String(n).padStart(2, "0");
     }
 
-    function timestampSlug() {
+    function compactTimestamp() {
       const d = new Date();
       return (
         d.getFullYear() +
@@ -256,8 +256,8 @@
         pad(d.getDate()) +
         " " +
         pad(d.getHours()) +
-        pad(d.getMinutes()) +
-        pad(d.getSeconds())
+        ":" +
+        pad(d.getMinutes())
       );
     }
 
@@ -271,6 +271,18 @@
       return cleaned || "notitie";
     }
 
+    function noteBaseName(title) {
+      const t = title.trim();
+      if (t) return slugify(t);
+      return "Notitie " + compactTimestamp();
+    }
+
+    function buildNoteFilename(title, duplicateIndex) {
+      const base = noteBaseName(title);
+      if (duplicateIndex <= 0) return base + ".md";
+      return base + " (" + duplicateIndex + ").md";
+    }
+
     function buildPath(filename) {
       const folder = els.folder.value.trim().replace(/^\/+|\/+$/g, "");
       return folder ? folder + "/" + filename : filename;
@@ -278,22 +290,32 @@
 
     function buildMarkdown(title, body) {
       const now = new Date().toISOString();
-      return [
-        "---",
-        "created: " + now,
-        "source: ignis-quick-capture",
-        "---",
-        "",
-        "# " + (title.trim() || "Notitie"),
-        "",
-        body.trim(),
-        "",
-      ].join("\n");
+      const lines = ["---", "created: " + now, "source: ignis-quick-capture", "---", ""];
+      const text = body.trim();
+      if (text) lines.push(text, "");
+      return lines.join("\n");
+    }
+
+    async function notePathExists(path) {
+      const vault = els.vaultId.value.trim();
+      const res = await fetch(
+        apiUrl("/api/fs/stat") + "?vault=" + encodeURIComponent(vault) + "&path=" + encodeURIComponent(path),
+        { credentials: "same-origin" },
+      );
+      if (res.status === 404) return false;
+      return res.ok;
+    }
+
+    async function allocateNotePath(title) {
+      for (let i = 0; i < 50; i++) {
+        const path = buildPath(buildNoteFilename(title, i));
+        if (!(await notePathExists(path))) return path;
+      }
+      throw new Error("Kon geen unieke bestandsnaam vinden.");
     }
 
     async function writeNote(title, body) {
-      const filename = timestampSlug() + " " + slugify(title) + ".md";
-      const path = buildPath(filename);
+      const path = await allocateNotePath(title);
       const content = buildMarkdown(title, body);
       await postJson("/api/fs/writeFile", { path, content });
       return { path };
