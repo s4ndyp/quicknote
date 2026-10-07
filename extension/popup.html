@@ -37,6 +37,16 @@
       <textarea id="body" placeholder="Notitie…"></textarea>
     </div>
 
+    <div class="field tags-field">
+      <div class="label-row">
+        <label for="tagFilter">Tags uit vault</label>
+        <button type="button" class="secondary compact" id="btnRefreshTags" title="Markdown opnieuw scannen">Vernieuwen</button>
+      </div>
+      <input type="search" id="tagFilter" class="tag-filter" placeholder="Zoek tag…" autocomplete="off" />
+      <p id="tagMeta" class="tag-meta">Nog niet geladen — klik Vernieuwen.</p>
+      <div id="tagChips" class="tag-chips" aria-live="polite"></div>
+    </div>
+
     <div class="row">
       <button type="button" class="primary" id="btnSave">Opslaan</button>
       <button type="button" class="secondary" id="btnTest">Test</button>
