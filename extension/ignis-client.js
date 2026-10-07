@@ -33,11 +33,12 @@ export function pad(n) {
   return String(n).padStart(2, "0");
 }
 
-export function timestampSlug() {
+/** Compact uniek suffix (alleen bij naamconflict of zonder titel). */
+export function compactTimestamp() {
   const d = new Date();
   return (
     `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
-    `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+    `${pad(d.getHours())}:${pad(d.getMinutes())}`
   );
 }
 
@@ -51,24 +52,33 @@ export function slugify(title) {
   return cleaned || "notitie";
 }
 
+/** Bestandsnaam zonder extensie — Obsidian/Ignis toont dit als notitietitel. */
+export function noteBaseName(title) {
+  const t = (title || "").trim();
+  if (t) return slugify(t);
+  return `Notitie ${compactTimestamp()}`;
+}
+
+/** @param {string} title @param {number} [duplicateIndex] 0 = eerste keuze, daarna suffix */
+export function buildNoteFilename(title, duplicateIndex = 0) {
+  const base = noteBaseName(title);
+  if (duplicateIndex <= 0) return `${base}.md`;
+  return `${base} (${duplicateIndex}).md`;
+}
+
 export function buildNotePath(folder, filename) {
   const f = (folder || "").trim().replace(/^\/+|\/+$/g, "");
   return f ? `${f}/${filename}` : filename;
 }
 
-export function buildMarkdown(title, body) {
+export function buildMarkdown(_title, body) {
   const now = new Date().toISOString();
-  return [
-    "---",
-    "created: " + now,
-    "source: ignis-quick-capture-extension",
-    "---",
-    "",
-    "# " + ((title || "").trim() || "Notitie"),
-    "",
-    (body || "").trim(),
-    "",
-  ].join("\n");
+  const lines = ["---", "created: " + now, "source: ignis-quick-capture-extension", "---", ""];
+  const text = (body || "").trim();
+  if (text) {
+    lines.push(text, "");
+  }
+  return lines.join("\n");
 }
 
 export async function parseJsonResponse(res) {
@@ -171,14 +181,38 @@ export function formatFolderLabel(folder) {
   return folder === "" ? "(vault root)" : folder;
 }
 
+/** @param {CaptureSettings} settings @param {string} relPath */
+async function notePathExists(settings, relPath) {
+  const url = buildApiUrlWithQuery(settings, "/api/fs/stat", {
+    vault: settings.vaultId.trim(),
+    path: relPath,
+  });
+  const res = await fetch(url);
+  if (res.status === 404) return false;
+  if (res.ok) return true;
+  await parseJsonResponse(res);
+  return false;
+}
+
+/** @param {CaptureSettings} settings @param {string} title @param {string} folder */
+async function allocateNotePath(settings, title, folder) {
+  for (let i = 0; i < 50; i++) {
+    const filename = buildNoteFilename(title, i);
+    const path = buildNotePath(folder, filename);
+    if (!(await notePathExists(settings, path))) {
+      return path;
+    }
+  }
+  throw new Error("Kon geen unieke bestandsnaam vinden (te veel duplicaten).");
+}
+
 /** @param {CaptureSettings} settings @param {string} [folderOverride] */
 export async function writeNote(settings, title, body, folderOverride) {
   const folder =
     folderOverride !== undefined && folderOverride !== null
       ? folderOverride
       : settings.folder;
-  const filename = `${timestampSlug()} ${slugify(title)}.md`;
-  const path = buildNotePath(folder, filename);
+  const path = await allocateNotePath(settings, title, folder);
   const content = buildMarkdown(title, body);
   await postIgnisJson(settings, "/api/fs/writeFile", { path, content });
   return { path };
