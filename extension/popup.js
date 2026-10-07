@@ -5,6 +5,8 @@ import {
   listSelectableFolders,
   formatFolderLabel,
 } from "./ignis-client.js";
+import { buildVaultTagIndex } from "./tag-index.js";
+import { loadTagIndexCache, saveTagIndexCache, isTagCacheStale } from "./tag-cache.js";
 import { loadSettings } from "./settings-store.js";
 import { ensurePermissionsForSettings } from "./permissions.js";
 
@@ -27,6 +29,10 @@ const els = {
   folderTree: document.getElementById("folderTree"),
   folderTreeLoading: document.getElementById("folderTreeLoading"),
   folderTreeError: document.getElementById("folderTreeError"),
+  tagFilter: document.getElementById("tagFilter"),
+  tagChips: document.getElementById("tagChips"),
+  tagMeta: document.getElementById("tagMeta"),
+  btnRefreshTags: document.getElementById("btnRefreshTags"),
 };
 
 /** @type {import('./ignis-client.js').CaptureSettings | null} */
@@ -34,6 +40,10 @@ let settings = null;
 
 /** Map for the next save (defaults to settings.folder / Inbox). */
 let saveFolder = "";
+
+/** @type {import('./tag-cache.js').TagIndexCache | null} */
+let tagIndex = null;
+let tagsLoading = false;
 
 function defaultFolder() {
   return (settings?.folder ?? "Inbox").trim();
@@ -54,6 +64,7 @@ function setBusy(busy) {
   els.btnTest.disabled = busy;
   els.btnPing.disabled = busy;
   els.btnPickFolder.disabled = busy;
+  if (!tagsLoading) els.btnRefreshTags.disabled = busy;
 }
 
 function updateModeBadge() {
@@ -76,6 +87,7 @@ async function refreshSettings() {
   settings = await loadSettings();
   updateModeBadge();
   resetSaveFolderToDefault();
+  void refreshTags(false);
 }
 
 async function withPermission(fn) {
@@ -156,26 +168,117 @@ async function onPickFolder() {
   }
 }
 
-function insertTaskLine() {
+function updateTagMeta() {
+  if (!tagIndex) {
+    els.tagMeta.textContent = "Nog niet geladen — klik Vernieuwen.";
+    return;
+  }
+  let msg = `${tagIndex.tags.length} tags uit ${tagIndex.filesScanned} notities`;
+  if (tagIndex.truncated) {
+    msg += ` (eerste ${tagIndex.filesScanned} van ${tagIndex.markdownTotal})`;
+  }
+  msg += ` · ${new Date(tagIndex.scannedAt).toLocaleString("nl-NL")}`;
+  els.tagMeta.textContent = msg;
+}
+
+function renderTagChips() {
+  els.tagChips.innerHTML = "";
+  const filter = els.tagFilter.value.trim().toLowerCase();
+  const list = (tagIndex?.tags || [])
+    .filter((entry) => !filter || entry.tag.toLowerCase().includes(filter))
+    .slice(0, 100);
+
+  if (!list.length) {
+    const hint = document.createElement("p");
+    hint.className = "empty-hint";
+    hint.textContent = tagIndex ? "Geen tags voor deze zoekterm." : "Scan de vault om tags te tonen.";
+    els.tagChips.appendChild(hint);
+    return;
+  }
+
+  for (const { tag, count } of list) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = count > 1 ? `#${tag} (${count})` : `#${tag}`;
+    btn.title = `Invoegen als #${tag} (${count}× in vault)`;
+    btn.addEventListener("click", () => insertTag(tag));
+    els.tagChips.appendChild(btn);
+  }
+}
+
+function insertTag(tag) {
+  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (new RegExp(`#${escaped}(?:[\\s/#]|$)`, "i").test(els.body.value)) {
+    setStatus("info", `#${tag} staat al in de notitie`);
+    return;
+  }
+  insertSnippet(`#${tag} `);
+}
+
+function insertSnippet(snippet) {
   const ta = els.body;
-  const task = "- [ ] ";
   const val = ta.value;
   const start = ta.selectionStart ?? val.length;
   const end = ta.selectionEnd ?? start;
-
-  let insert = task;
-  if (val.length === 0) {
-    insert = task;
-  } else if (start === 0 && val.slice(0, 1) !== "\n") {
-    insert = task;
-  } else {
-    const before = val.slice(0, start);
-    const needsLeadingNewline = before.length > 0 && !before.endsWith("\n");
-    insert = (needsLeadingNewline ? "\n" : "") + task;
+  let insert = snippet;
+  if (val.length > 0 && start > 0) {
+    const last = val[start - 1];
+    if (last !== "\n" && last !== " ") {
+      insert = " " + snippet;
+    }
   }
-
   ta.setRangeText(insert, start, end, "end");
   ta.focus();
+}
+
+async function refreshTags(force) {
+  if (tagsLoading) return;
+  if (!settings) {
+    settings = await loadSettings();
+    updateModeBadge();
+    resetSaveFolderToDefault();
+  }
+  const vault = settings.vaultId.trim();
+
+  if (!force) {
+    const cached = await loadTagIndexCache(vault);
+    if (cached?.tags) {
+      tagIndex = cached;
+      updateTagMeta();
+      renderTagChips();
+      if (!isTagCacheStale(cached)) return;
+    }
+  }
+
+  tagsLoading = true;
+  els.btnRefreshTags.disabled = true;
+  els.tagMeta.textContent = "Tags scannen…";
+  try {
+    tagIndex = await withPermission((s) =>
+      buildVaultTagIndex(s, (done, total) => {
+        els.tagMeta.textContent = `Tags scannen… ${done}/${total}`;
+      }),
+    );
+    await saveTagIndexCache(vault, tagIndex);
+    updateTagMeta();
+    renderTagChips();
+    setStatus("ok", `${tagIndex.tags.length} tags gevonden in vault.`);
+  } catch (e) {
+    els.tagMeta.textContent = "Tag-scan mislukt.";
+    setStatus("err", formatError(e));
+  } finally {
+    tagsLoading = false;
+    els.btnRefreshTags.disabled = false;
+  }
+}
+
+function insertTaskLine() {
+  const ta = els.body;
+  const val = ta.value;
+  const start = ta.selectionStart ?? val.length;
+  const before = val.slice(0, start);
+  const needsLeadingNewline = before.length > 0 && !before.endsWith("\n");
+  insertSnippet((needsLeadingNewline ? "\n" : "") + "- [ ] ");
 }
 
 async function onSave() {
@@ -260,6 +363,8 @@ els.btnResetFolder.addEventListener("click", () => {
   setStatus("info", "Opslaglocatie: " + formatFolderLabel(saveFolder));
 });
 els.btnInsertTask.addEventListener("click", insertTaskLine);
+els.btnRefreshTags.addEventListener("click", () => refreshTags(true));
+els.tagFilter.addEventListener("input", renderTagChips);
 els.btnCloseFolderModal.addEventListener("click", closeFolderModal);
 els.folderModalBackdrop.addEventListener("click", closeFolderModal);
 els.openOptions.addEventListener("click", (e) => {
