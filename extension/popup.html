@@ -16,12 +16,24 @@
       <a href="#" id="openOptions">Instellingen</a>
     </div>
 
+    <div class="field save-loc">
+      <label>Opslaglocatie</label>
+      <div class="save-loc-row">
+        <code id="saveFolder" class="save-folder-label" title="Map voor deze notitie">Inbox</code>
+        <button type="button" class="secondary compact" id="btnPickFolder">Kies map…</button>
+        <button type="button" class="secondary compact" id="btnResetFolder" title="Terug naar standaardmap uit instellingen">Reset</button>
+      </div>
+    </div>
+
     <div class="field">
       <label for="title">Titel</label>
       <input type="text" id="title" placeholder="Onderwerp" autofocus />
     </div>
     <div class="field">
-      <label for="body">Inhoud</label>
+      <div class="label-row">
+        <label for="body">Inhoud</label>
+        <button type="button" class="secondary compact" id="btnInsertTask">+ Taak</button>
+      </div>
       <textarea id="body" placeholder="Notitie…"></textarea>
     </div>
 
@@ -33,6 +45,21 @@
 
     <div id="status" class="status" role="status"></div>
   </div>
+
+  <div id="folderModal" class="modal" hidden aria-hidden="true">
+    <div class="modal-backdrop" id="folderModalBackdrop"></div>
+    <div class="modal-panel" role="dialog" aria-labelledby="folderModalTitle">
+      <div class="modal-header">
+        <h2 id="folderModalTitle">Kies map</h2>
+        <button type="button" class="icon-btn" id="btnCloseFolderModal" aria-label="Sluiten">×</button>
+      </div>
+      <p class="modal-hint">Klik een map om die als opslaglocatie te gebruiken.</p>
+      <div id="folderTreeLoading" class="tree-loading" hidden>Vault laden…</div>
+      <div id="folderTreeError" class="tree-error" hidden></div>
+      <ul id="folderTree" class="folder-tree" tabindex="0"></ul>
+    </div>
+  </div>
+
   <script type="module" src="popup.js"></script>
 </body>
 </html>

@@ -1,4 +1,10 @@
-import { writeNote, testConnection } from "./ignis-client.js";
+import {
+  writeNote,
+  testConnection,
+  fetchVaultTree,
+  listSelectableFolders,
+  formatFolderLabel,
+} from "./ignis-client.js";
 import { loadSettings } from "./settings-store.js";
 import { ensurePermissionsForSettings } from "./permissions.js";
 
@@ -7,14 +13,31 @@ const els = {
   title: document.getElementById("title"),
   body: document.getElementById("body"),
   status: document.getElementById("status"),
+  saveFolder: document.getElementById("saveFolder"),
   btnSave: document.getElementById("btnSave"),
   btnTest: document.getElementById("btnTest"),
   btnPing: document.getElementById("btnPing"),
+  btnPickFolder: document.getElementById("btnPickFolder"),
+  btnResetFolder: document.getElementById("btnResetFolder"),
+  btnInsertTask: document.getElementById("btnInsertTask"),
   openOptions: document.getElementById("openOptions"),
+  folderModal: document.getElementById("folderModal"),
+  folderModalBackdrop: document.getElementById("folderModalBackdrop"),
+  btnCloseFolderModal: document.getElementById("btnCloseFolderModal"),
+  folderTree: document.getElementById("folderTree"),
+  folderTreeLoading: document.getElementById("folderTreeLoading"),
+  folderTreeError: document.getElementById("folderTreeError"),
 };
 
 /** @type {import('./ignis-client.js').CaptureSettings | null} */
 let settings = null;
+
+/** Map for the next save (defaults to settings.folder / Inbox). */
+let saveFolder = "";
+
+function defaultFolder() {
+  return (settings?.folder ?? "Inbox").trim();
+}
 
 function setStatus(kind, message) {
   els.status.className = "status show " + kind;
@@ -30,6 +53,7 @@ function setBusy(busy) {
   els.btnSave.disabled = busy;
   els.btnTest.disabled = busy;
   els.btnPing.disabled = busy;
+  els.btnPickFolder.disabled = busy;
 }
 
 function updateModeBadge() {
@@ -37,9 +61,21 @@ function updateModeBadge() {
   els.modeBadge.textContent = settings.connectionMode === "proxy" ? "docker proxy" : "direct";
 }
 
+function updateSaveFolderUi() {
+  const label = formatFolderLabel(saveFolder);
+  els.saveFolder.textContent = label;
+  els.saveFolder.title = saveFolder === "" ? "Vault root" : saveFolder;
+}
+
+function resetSaveFolderToDefault() {
+  saveFolder = defaultFolder();
+  updateSaveFolderUi();
+}
+
 async function refreshSettings() {
   settings = await loadSettings();
   updateModeBadge();
+  resetSaveFolderToDefault();
 }
 
 async function withPermission(fn) {
@@ -51,6 +87,97 @@ async function withPermission(fn) {
   return fn(settings);
 }
 
+function folderDepth(path) {
+  if (!path) return 0;
+  return path.split("/").length;
+}
+
+function depthClass(depth) {
+  const d = Math.min(depth, 5);
+  return d > 0 ? `depth-${d}` : "";
+}
+
+function renderFolderTree(folders) {
+  els.folderTree.innerHTML = "";
+  for (const path of folders) {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = depthClass(folderDepth(path));
+    btn.textContent = formatFolderLabel(path);
+    btn.dataset.path = path;
+    if (path === saveFolder) {
+      btn.classList.add("selected");
+    }
+    btn.addEventListener("click", () => {
+      saveFolder = path;
+      updateSaveFolderUi();
+      closeFolderModal();
+      setStatus("info", "Opslaglocatie: " + formatFolderLabel(path));
+    });
+    li.appendChild(btn);
+    els.folderTree.appendChild(li);
+  }
+}
+
+function openFolderModal() {
+  els.folderModal.hidden = false;
+  els.folderModal.setAttribute("aria-hidden", "false");
+}
+
+function closeFolderModal() {
+  els.folderModal.hidden = true;
+  els.folderModal.setAttribute("aria-hidden", "true");
+  els.folderTreeError.hidden = true;
+  els.folderTreeLoading.hidden = true;
+}
+
+async function onPickFolder() {
+  clearStatus();
+  openFolderModal();
+  els.folderTree.innerHTML = "";
+  els.folderTreeError.hidden = true;
+  els.folderTreeLoading.hidden = false;
+  setBusy(true);
+  try {
+    const tree = await withPermission((s) => fetchVaultTree(s));
+    const folders = listSelectableFolders(tree);
+    renderFolderTree(folders);
+    if (folders.length === 0) {
+      els.folderTreeError.hidden = false;
+      els.folderTreeError.textContent = "Geen mappen gevonden in deze vault.";
+    }
+  } catch (e) {
+    els.folderTreeError.hidden = false;
+    els.folderTreeError.textContent = formatError(e);
+  } finally {
+    els.folderTreeLoading.hidden = true;
+    setBusy(false);
+  }
+}
+
+function insertTaskLine() {
+  const ta = els.body;
+  const task = "- [ ] ";
+  const val = ta.value;
+  const start = ta.selectionStart ?? val.length;
+  const end = ta.selectionEnd ?? start;
+
+  let insert = task;
+  if (val.length === 0) {
+    insert = task;
+  } else if (start === 0 && val.slice(0, 1) !== "\n") {
+    insert = task;
+  } else {
+    const before = val.slice(0, start);
+    const needsLeadingNewline = before.length > 0 && !before.endsWith("\n");
+    insert = (needsLeadingNewline ? "\n" : "") + task;
+  }
+
+  ta.setRangeText(insert, start, end, "end");
+  ta.focus();
+}
+
 async function onSave() {
   clearStatus();
   if (!els.body.value.trim() && !els.title.value.trim()) {
@@ -59,10 +186,13 @@ async function onSave() {
   }
   setBusy(true);
   try {
-    const { path } = await withPermission((s) => writeNote(s, els.title.value, els.body.value));
+    const { path } = await withPermission((s) =>
+      writeNote(s, els.title.value, els.body.value, saveFolder),
+    );
     setStatus("ok", "Opgeslagen: " + path);
     els.body.value = "";
     els.title.value = "";
+    resetSaveFolderToDefault();
     els.title.focus();
   } catch (e) {
     setStatus("err", formatError(e));
@@ -80,6 +210,7 @@ async function onTest() {
         s,
         "Extension test",
         "Testnotitie vanuit Chrome-extensie.\n\n" + new Date().toLocaleString("nl-NL") + "\n",
+        saveFolder,
       ),
     );
     setStatus("ok", "Test OK: " + path);
@@ -123,6 +254,14 @@ function formatError(e) {
 els.btnSave.addEventListener("click", onSave);
 els.btnTest.addEventListener("click", onTest);
 els.btnPing.addEventListener("click", onPing);
+els.btnPickFolder.addEventListener("click", onPickFolder);
+els.btnResetFolder.addEventListener("click", () => {
+  resetSaveFolderToDefault();
+  setStatus("info", "Opslaglocatie: " + formatFolderLabel(saveFolder));
+});
+els.btnInsertTask.addEventListener("click", insertTaskLine);
+els.btnCloseFolderModal.addEventListener("click", closeFolderModal);
+els.folderModalBackdrop.addEventListener("click", closeFolderModal);
 els.openOptions.addEventListener("click", (e) => {
   e.preventDefault();
   chrome.runtime.openOptionsPage();

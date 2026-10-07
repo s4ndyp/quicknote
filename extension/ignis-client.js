@@ -102,17 +102,83 @@ export async function postIgnisJson(settings, apiPath, body) {
   return parseJsonResponse(res);
 }
 
-/** @param {CaptureSettings} settings */
-export async function getIgnisJson(settings, apiPath) {
+/** @param {CaptureSettings} settings @param {Record<string, string>} [query] */
+export function buildApiUrlWithQuery(settings, apiPath, query = {}) {
   const url = buildApiUrl(settings, apiPath);
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && value !== "") {
+      params.set(key, value);
+    }
+  }
+  const qs = params.toString();
+  return qs ? `${url}?${qs}` : url;
+}
+
+/** @param {CaptureSettings} settings @param {Record<string, string>} [query] */
+export async function getIgnisJson(settings, apiPath, query = {}) {
+  const url = buildApiUrlWithQuery(settings, apiPath, query);
   const res = await fetch(url);
   return parseJsonResponse(res);
 }
 
-/** @param {CaptureSettings} settings */
-export async function writeNote(settings, title, body) {
+/** @typedef {Record<string, { type: 'file' | 'directory', size?: number, mtime?: number, ctime?: number }>} VaultTree */
+
+/** @param {CaptureSettings} settings @returns {Promise<VaultTree>} */
+export async function fetchVaultTree(settings) {
+  return getIgnisJson(settings, "/api/fs/tree", {
+    vault: settings.vaultId.trim(),
+  });
+}
+
+const HIDDEN_TREE_PREFIXES = [".obsidian", ".trash"];
+
+/** @param {string} relPath */
+export function isHiddenVaultPath(relPath) {
+  if (!relPath) return false;
+  if (relPath.startsWith(".") && relPath !== "") {
+    return HIDDEN_TREE_PREFIXES.some(
+      (p) => relPath === p || relPath.startsWith(p + "/"),
+    );
+  }
+  const segments = relPath.split("/");
+  return segments.some((seg) => seg.startsWith(".") && seg !== "..");
+}
+
+/** @param {VaultTree} tree @returns {string[]} sorted folder paths (empty string = vault root) */
+export function listSelectableFolders(tree) {
+  const dirs = new Set([""]);
+  for (const [relPath, node] of Object.entries(tree || {})) {
+    if (node.type === "directory") {
+      if (!isHiddenVaultPath(relPath)) dirs.add(relPath);
+    } else if (node.type === "file") {
+      const slash = relPath.lastIndexOf("/");
+      if (slash >= 0) {
+        const parent = relPath.slice(0, slash);
+        if (!isHiddenVaultPath(parent)) dirs.add(parent);
+      }
+    }
+  }
+  return [...dirs].sort((a, b) => {
+    if (a === "") return -1;
+    if (b === "") return 1;
+    return a.localeCompare(b, undefined, { sensitivity: "base" });
+  });
+}
+
+/** @param {string} folder */
+export function formatFolderLabel(folder) {
+  return folder === "" ? "(vault root)" : folder;
+}
+
+/** @param {CaptureSettings} settings @param {string} [folderOverride] */
+export async function writeNote(settings, title, body, folderOverride) {
+  const folder =
+    folderOverride !== undefined && folderOverride !== null
+      ? folderOverride
+      : settings.folder;
   const filename = `${timestampSlug()} ${slugify(title)}.md`;
-  const path = buildNotePath(settings.folder, filename);
+  const path = buildNotePath(folder, filename);
   const content = buildMarkdown(title, body);
   await postIgnisJson(settings, "/api/fs/writeFile", { path, content });
   return { path };
