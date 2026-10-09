@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Ignis Quick Capture</title>
+  <title>Quicknote Capture</title>
   <style>
     :root {
       color-scheme: dark;
@@ -35,6 +35,16 @@
       font-size: 0.875rem;
       margin-bottom: 1.25rem;
     }
+    .mode-badge {
+      display: inline-block;
+      font-size: 0.65rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: #333;
+      color: var(--muted);
+      margin-left: 6px;
+      vertical-align: middle;
+    }
     label {
       display: block;
       font-size: 0.8rem;
@@ -42,7 +52,9 @@
       margin-bottom: 0.35rem;
     }
     input[type="text"],
-    textarea {
+    input[type="password"],
+    textarea,
+    select {
       width: 100%;
       background: var(--surface);
       border: 1px solid var(--border);
@@ -52,7 +64,7 @@
       font: inherit;
     }
     textarea { min-height: 8rem; resize: vertical; }
-    input:focus, textarea:focus {
+    input:focus, textarea:focus, select:focus {
       outline: 2px solid var(--accent);
       outline-offset: 0;
       border-color: transparent;
@@ -122,16 +134,26 @@
 </head>
 <body>
   <div class="wrap">
-    <h1>Ignis Quick Capture</h1>
+    <h1>Quicknote Capture <span id="modeBadge" class="mode-badge">REST proxy</span></h1>
     <p class="sub">
-      Notities opslaan in je Obsidian-vault via Ignis. Deze container proxy't
-      <code>/ignis-api/</code> naar Ignis — geen CORS in de browser.
+      Sla notities op via <strong>Obsidian Local REST API</strong> of Ignis (<code>/ignis-api/</code>).
     </p>
 
-    <details>
+    <details open>
       <summary>Instellingen</summary>
       <div class="field">
-        <label for="vaultId">Vault</label>
+        <label for="connectionMode">Backend</label>
+        <select id="connectionMode">
+          <option value="rest-proxy">Local REST via proxy (/obsidian-rest)</option>
+          <option value="proxy">Ignis via proxy (/ignis-api)</option>
+        </select>
+      </div>
+      <div id="restBlock" class="field">
+        <label for="restApiKey">Local REST API key</label>
+        <input type="password" id="restApiKey" autocomplete="off" placeholder="Obsidian → Local REST API" />
+      </div>
+      <div id="ignisBlock" class="field" hidden>
+        <label for="vaultId">Vault (Ignis)</label>
         <input type="text" id="vaultId" value="My Vault" autocomplete="off" />
       </div>
       <div class="field">
@@ -158,260 +180,12 @@
     <div id="status" class="status" role="status"></div>
 
     <p class="hint">
-      Ignis-URL staat in <code>IGNIS_UPSTREAM</code> (docker compose / <code>.env</code>).
-      Bij self-signed certificaat op Ignis: nginx gebruikt <code>proxy_ssl_verify off</code>.
+      REST-proxy: zet <code>OBSIDIAN_REST_UPSTREAM</code> op je Obsidian-host (standaard
+      <code>https://host.docker.internal:27124</code>). Obsidian moet open staan.<br />
+      Ignis-proxy: <code>IGNIS_UPSTREAM</code> in docker compose / <code>.env</code>.
     </p>
   </div>
 
-  <script>
-    const STORAGE_KEY = "ignis-quick-capture-settings";
-    const API_PREFIX = "/ignis-api";
-
-    const els = {
-      vaultId: document.getElementById("vaultId"),
-      folder: document.getElementById("folder"),
-      title: document.getElementById("title"),
-      body: document.getElementById("body"),
-      status: document.getElementById("status"),
-      btnSave: document.getElementById("btnSave"),
-      btnTest: document.getElementById("btnTest"),
-      btnPing: document.getElementById("btnPing"),
-    };
-
-    function loadSettings() {
-      try {
-        const s = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
-        if (s.vaultId) els.vaultId.value = s.vaultId;
-        if (s.folder !== undefined) els.folder.value = s.folder;
-      } catch (_) {}
-    }
-
-    function saveSettings() {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          vaultId: els.vaultId.value.trim(),
-          folder: els.folder.value.trim(),
-        }),
-      );
-    }
-
-    ["vaultId", "folder"].forEach((id) => {
-      els[id].addEventListener("change", saveSettings);
-    });
-
-    function setStatus(kind, message) {
-      els.status.className = "status show " + kind;
-      els.status.textContent = message;
-    }
-
-    function clearStatus() {
-      els.status.className = "status";
-      els.status.textContent = "";
-    }
-
-    function apiUrl(apiPath) {
-      const sub = apiPath.replace(/^\/api/, "");
-      return API_PREFIX + sub;
-    }
-
-    async function postJson(path, body) {
-      const vault = els.vaultId.value.trim();
-      const res = await fetch(apiUrl(path), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vault, ...body }),
-        credentials: "same-origin",
-      });
-      const text = await res.text();
-      let data;
-      try {
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        data = { raw: text };
-      }
-      if (!res.ok) {
-        const msg =
-          data.error ||
-          data.message ||
-          (typeof data.raw === "string" ? data.raw : null) ||
-          res.statusText ||
-          "Request mislukt";
-        throw new Error(`HTTP ${res.status}: ${msg}`);
-      }
-      return data;
-    }
-
-    function pad(n) {
-      return String(n).padStart(2, "0");
-    }
-
-    function compactTimestamp() {
-      const d = new Date();
-      return (
-        d.getFullYear() +
-        "-" +
-        pad(d.getMonth() + 1) +
-        "-" +
-        pad(d.getDate()) +
-        " " +
-        pad(d.getHours()) +
-        ":" +
-        pad(d.getMinutes())
-      );
-    }
-
-    function slugify(title) {
-      const t = title.trim() || "notitie";
-      const cleaned = t
-        .replace(/[/\\:*?"<>|]/g, "-")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 80);
-      return cleaned || "notitie";
-    }
-
-    function noteBaseName(title) {
-      const t = title.trim();
-      if (t) return slugify(t);
-      return "Notitie " + compactTimestamp();
-    }
-
-    function buildNoteFilename(title, duplicateIndex) {
-      const base = noteBaseName(title);
-      if (duplicateIndex <= 0) return base + ".md";
-      return base + " (" + duplicateIndex + ").md";
-    }
-
-    function buildPath(filename) {
-      const folder = els.folder.value.trim().replace(/^\/+|\/+$/g, "");
-      return folder ? folder + "/" + filename : filename;
-    }
-
-    function buildMarkdown(title, body) {
-      const now = new Date().toISOString();
-      const lines = ["---", "created: " + now, "source: ignis-quick-capture", "---", ""];
-      const text = body.trim();
-      if (text) lines.push(text, "");
-      return lines.join("\n");
-    }
-
-    async function notePathExists(path) {
-      const vault = els.vaultId.value.trim();
-      const res = await fetch(
-        apiUrl("/api/fs/stat") + "?vault=" + encodeURIComponent(vault) + "&path=" + encodeURIComponent(path),
-        { credentials: "same-origin" },
-      );
-      if (res.status === 404) return false;
-      return res.ok;
-    }
-
-    async function allocateNotePath(title) {
-      for (let i = 0; i < 50; i++) {
-        const path = buildPath(buildNoteFilename(title, i));
-        if (!(await notePathExists(path))) return path;
-      }
-      throw new Error("Kon geen unieke bestandsnaam vinden.");
-    }
-
-    async function writeNote(title, body) {
-      const path = await allocateNotePath(title);
-      const content = buildMarkdown(title, body);
-      await postJson("/api/fs/writeFile", { path, content });
-      return { path };
-    }
-
-    function setBusy(busy) {
-      els.btnSave.disabled = busy;
-      els.btnTest.disabled = busy;
-      els.btnPing.disabled = busy;
-    }
-
-    async function onSave() {
-      clearStatus();
-      saveSettings();
-      if (!els.body.value.trim() && !els.title.value.trim()) {
-        setStatus("err", "Vul minimaal een titel of inhoud in.");
-        return;
-      }
-      setBusy(true);
-      try {
-        const { path } = await writeNote(els.title.value, els.body.value);
-        setStatus("ok", "Opgeslagen als: " + path);
-        els.body.value = "";
-        els.title.value = "";
-        els.title.focus();
-      } catch (e) {
-        setStatus("err", e.message || String(e));
-      } finally {
-        setBusy(false);
-      }
-    }
-
-    async function onTest() {
-      clearStatus();
-      saveSettings();
-      setBusy(true);
-      try {
-        const { path } = await writeNote(
-          "Ignis test",
-          "Automatische testnotitie.\n\nAangemaakt: " +
-            new Date().toLocaleString("nl-NL") +
-            "\n",
-        );
-        setStatus("ok", "Testnotitie opgeslagen: " + path);
-      } catch (e) {
-        setStatus("err", e.message || String(e));
-      } finally {
-        setBusy(false);
-      }
-    }
-
-    async function onPing() {
-      clearStatus();
-      saveSettings();
-      setBusy(true);
-      try {
-        const versionRes = await fetch(apiUrl("/api/version"), { credentials: "same-origin" });
-        if (!versionRes.ok) throw new Error("Versie-endpoint: HTTP " + versionRes.status);
-        const version = await versionRes.json();
-
-        const listRes = await fetch(apiUrl("/api/vault/list"), { credentials: "same-origin" });
-        if (!listRes.ok) throw new Error("Vault-lijst: HTTP " + listRes.status);
-        const vaults = await listRes.json();
-
-        const vault = els.vaultId.value.trim();
-        const found = Array.isArray(vaults) && vaults.some((v) => v.id === vault);
-        const ignisVer = version.ignis || version.version || "?";
-        const obsVer = version.obsidian || version.obsidianVersion || "?";
-
-        setStatus(
-          found ? "ok" : "info",
-          "Verbonden. Ignis " +
-            ignisVer +
-            ", Obsidian " +
-            obsVer +
-            '. Vault "' +
-            vault +
-            '": ' +
-            (found ? "gevonden" : "niet in lijst — controleer de naam") +
-            ".",
-        );
-      } catch (e) {
-        setStatus(
-          "err",
-          (e.message || String(e)) +
-            " — controleer IGNIS_UPSTREAM en of Ignis bereikbaar is vanuit de container.",
-        );
-      } finally {
-        setBusy(false);
-      }
-    }
-
-    els.btnSave.addEventListener("click", onSave);
-    els.btnTest.addEventListener("click", onTest);
-    els.btnPing.addEventListener("click", onPing);
-    loadSettings();
-  </script>
+  <script type="module" src="/js/web-app.js"></script>
 </body>
 </html>
