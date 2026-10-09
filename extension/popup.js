@@ -1,10 +1,10 @@
 import {
   writeNote,
   testConnection,
-  fetchVaultTree,
-  listSelectableFolders,
+  fetchVaultFolders,
   formatFolderLabel,
-} from "./ignis-client.js";
+  connectionModeLabel,
+} from "./capture-api.js";
 import { buildVaultTagIndex } from "./tag-index.js";
 import { loadTagIndexCache, saveTagIndexCache, isTagCacheStale } from "./tag-cache.js";
 import { loadSettings } from "./settings-store.js";
@@ -69,7 +69,7 @@ function setBusy(busy) {
 
 function updateModeBadge() {
   if (!settings) return;
-  els.modeBadge.textContent = settings.connectionMode === "proxy" ? "docker proxy" : "direct";
+  els.modeBadge.textContent = connectionModeLabel(settings);
 }
 
 function updateSaveFolderUi() {
@@ -152,8 +152,7 @@ async function onPickFolder() {
   els.folderTreeLoading.hidden = false;
   setBusy(true);
   try {
-    const tree = await withPermission((s) => fetchVaultTree(s));
-    const folders = listSelectableFolders(tree);
+    const folders = await withPermission((s) => fetchVaultFolders(s));
     renderFolderTree(folders);
     if (folders.length === 0) {
       els.folderTreeError.hidden = false;
@@ -329,12 +328,19 @@ async function onPing() {
   setBusy(true);
   try {
     const result = await withPermission((s) => testConnection(s));
-    setStatus(
-      result.found ? "ok" : "info",
-      `Ignis ${result.ignisVer}, Obsidian ${result.obsVer}. Vault "${result.vault}": ${
-        result.found ? "gevonden" : "niet gevonden"
-      }.`,
-    );
+    if (result.rest) {
+      setStatus(
+        result.authenticated ? "ok" : "info",
+        `${result.service} bereikbaar (${result.endpoint}). Obsidian ${result.obsVer}.`,
+      );
+    } else {
+      setStatus(
+        result.found ? "ok" : "info",
+        `Ignis ${result.ignisVer}, Obsidian ${result.obsVer}. Vault "${result.vault}": ${
+          result.found ? "gevonden" : "niet gevonden"
+        }.`,
+      );
+    }
   } catch (e) {
     setStatus("err", formatError(e));
   } finally {
@@ -347,9 +353,12 @@ function formatError(e) {
   if (/Failed to fetch|NetworkError|ERR_CERT/i.test(msg)) {
     return (
       msg +
-      " — TLS/certificaat? Open Ignis eenmalig in een tab en vertrouw het certificaat. " +
-      "Anders: zet in Instellingen modus Docker proxy."
+      " — TLS/certificaat? Open de API-URL in een tab en vertrouw het certificaat, " +
+      "of gebruik HTTP (poort 27123) in de Local REST API-plugin. Bij Ignis: Docker proxy-modus."
     );
+  }
+  if (/401|403/.test(msg)) {
+    return msg + " — Controleer de API key in Obsidian → Local REST API.";
   }
   return msg;
 }

@@ -1,14 +1,24 @@
 import { loadSettings, saveSettings } from "./settings-store.js";
 import { ensurePermissionsForSettings, activeBaseUrl } from "./permissions.js";
+import { isRestConnectionMode } from "./rest-client.js";
 
 const form = document.getElementById("form");
 const statusEl = document.getElementById("status");
 const connectionMode = document.getElementById("connectionMode");
 const ignisFields = document.getElementById("ignisFields");
 const proxyFields = document.getElementById("proxyFields");
+const restFields = document.getElementById("restFields");
+const vaultFields = document.getElementById("vaultFields");
 const btnRequestPerm = document.getElementById("btnRequestPerm");
 
-const fields = ["ignisBaseUrl", "proxyBaseUrl", "vaultId", "folder"];
+const fields = [
+  "ignisBaseUrl",
+  "proxyBaseUrl",
+  "vaultId",
+  "folder",
+  "restApiUrl",
+  "restApiKey",
+];
 
 function setStatus(kind, message) {
   statusEl.className = "status show " + kind;
@@ -16,16 +26,22 @@ function setStatus(kind, message) {
 }
 
 function syncModeUi() {
-  const proxy = connectionMode.value === "proxy";
-  ignisFields.hidden = proxy;
+  const mode = connectionMode.value;
+  const ignisDirect = mode === "direct";
+  const proxy = mode === "proxy" || mode === "rest-proxy";
+  const rest = isRestConnectionMode(mode);
+
+  ignisFields.hidden = !ignisDirect;
   proxyFields.hidden = !proxy;
+  restFields.hidden = !rest || mode === "rest-proxy";
+  vaultFields.hidden = rest;
 }
 
 connectionMode.addEventListener("change", syncModeUi);
 
 async function populateForm() {
   const s = await loadSettings();
-  connectionMode.value = s.connectionMode;
+  connectionMode.value = s.connectionMode || "rest";
   for (const id of fields) {
     const el = document.getElementById(id);
     if (el) el.value = s[id] ?? "";
@@ -41,6 +57,8 @@ form.addEventListener("submit", async (e) => {
     folder: document.getElementById("folder").value.trim(),
     ignisBaseUrl: document.getElementById("ignisBaseUrl").value.trim(),
     proxyBaseUrl: document.getElementById("proxyBaseUrl").value.trim(),
+    restApiUrl: document.getElementById("restApiUrl").value.trim(),
+    restApiKey: document.getElementById("restApiKey").value.trim(),
   };
   await saveSettings(partial);
   const ok = await ensurePermissionsForSettings(partial);

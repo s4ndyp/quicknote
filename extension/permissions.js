@@ -1,7 +1,11 @@
 import { normalizeBase, originPatternFromBase } from "./ignis-client.js";
+import { effectiveRestBase, isRestConnectionMode } from "./rest-client.js";
 
-/** @param {{ connectionMode: string, ignisBaseUrl: string, proxyBaseUrl: string }} settings */
+/** @param {import('./ignis-client.js').CaptureSettings} settings */
 export function activeBaseUrl(settings) {
+  if (isRestConnectionMode(settings.connectionMode)) {
+    return effectiveRestBase(settings);
+  }
   if (settings.connectionMode === "proxy") {
     return normalizeBase(settings.proxyBaseUrl);
   }
@@ -22,9 +26,11 @@ export async function ensureHostPermission(baseUrl) {
   return chrome.permissions.request({ origins: [pattern] });
 }
 
-/** @param {{ connectionMode: string, ignisBaseUrl: string, proxyBaseUrl: string }} settings */
+/** @param {import('./ignis-client.js').CaptureSettings} settings */
 export async function ensurePermissionsForSettings(settings) {
   const base = activeBaseUrl(settings);
-  if (!base) throw new Error("Vul een Ignis- of proxy-URL in (Instellingen)");
+  if (!base) throw new Error("Vul een API-URL in (Instellingen)");
   return ensureHostPermission(base);
 }
+
+export { originPatternFromBase };

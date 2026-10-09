@@ -25,15 +25,24 @@
 <body>
   <div class="wrap">
     <h1>Instellingen</h1>
-    <p class="sub">Direct naar Ignis (standaard) of fallback via je Docker capture-proxy.</p>
+    <p class="sub">Local REST API (desktop Obsidian), Ignis direct, of Docker-proxy.</p>
 
     <form id="form">
       <div class="section field">
         <label for="connectionMode">Verbinding</label>
         <select id="connectionMode" name="connectionMode">
-          <option value="direct">Rechtstreeks naar Ignis API</option>
-          <option value="proxy">Via Docker capture (/ignis-api)</option>
+          <option value="rest">Obsidian Local REST API (127.0.0.1)</option>
+          <option value="rest-proxy">REST via Docker proxy (/obsidian-rest)</option>
+          <option value="direct">Ignis API (direct)</option>
+          <option value="proxy">Ignis via Docker proxy (/ignis-api)</option>
         </select>
+      </div>
+
+      <div class="section field" id="restFields">
+        <label for="restApiUrl">REST API URL</label>
+        <input type="text" id="restApiUrl" name="restApiUrl" placeholder="https://127.0.0.1:27124" />
+        <label for="restApiKey" style="margin-top:8px">API key</label>
+        <input type="password" id="restApiKey" name="restApiKey" autocomplete="off" placeholder="Uit Obsidian → Local REST API" />
       </div>
 
       <div class="section field" id="ignisFields">
@@ -46,13 +55,13 @@
         <input type="text" id="proxyBaseUrl" name="proxyBaseUrl" placeholder="http://localhost:8080" />
       </div>
 
-      <div class="section field">
-        <label for="vaultId">Vault</label>
+      <div class="section field" id="vaultFields">
+        <label for="vaultId">Vault (alleen Ignis)</label>
         <input type="text" id="vaultId" name="vaultId" />
       </div>
 
       <div class="field">
-        <label for="folder">Map in vault</label>
+        <label for="folder">Standaard map in vault</label>
         <input type="text" id="folder" name="folder" />
       </div>
 
@@ -65,12 +74,10 @@
     <div id="status" class="status" role="status"></div>
 
     <p class="hint">
-      <strong>Direct:</strong> extensie roept <code>/api/fs/writeFile</code> op Ignis aan. Chrome vraagt
-      toestemming voor die host (<code>host_permissions</code> / optional). Bij self-signed HTTPS: open Ignis
-      eerst in een normale tab en accepteer het certificaat.<br /><br />
-      <strong>Docker proxy:</strong> zelfde als de web-app — URL van je <code>docker compose</code> service,
-      pad <code>/ignis-api/</code> wordt automatisch gebruikt.<br /><br />
-      Laden: <code>chrome://extensions</code> → Ontwikkelaarsmodus → Uitgepakt laden → map <code>extension/</code>.
+      <strong>Local REST:</strong> Obsidian moet open staan met plugin <em>Local REST API</em>. Key kopieer je uit de plugin-instellingen.
+      HTTPS (<code>27124</code>) gebruikt een self-signed certificaat — open die URL eenmalig in Chrome en vertrouw het, of schakel HTTP in (<code>27123</code>).<br /><br />
+      <strong>REST proxy:</strong> Docker nginx proxy't <code>/obsidian-rest/</code> naar je PC (<code>OBSIDIAN_REST_UPSTREAM</code>).<br /><br />
+      <strong>Ignis:</strong> <code>/api/fs/writeFile</code> zoals voorheen.
     </p>
   </div>
   <script type="module" src="options.js"></script>

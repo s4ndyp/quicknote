@@ -7,7 +7,7 @@ services:
       - "${CAPTURE_PORT:-8080}:80"
     environment:
       IGNIS_UPSTREAM: ${IGNIS_UPSTREAM:-https://10.5.0.134}
-      NGINX_ENVS: IGNIS_UPSTREAM
-    # Optioneel: extra host mapping als Ignis op de Docker-host draait (Linux)
-    # extra_hosts:
-    #   - "host.docker.internal:host-gateway"
+      OBSIDIAN_REST_UPSTREAM: ${OBSIDIAN_REST_UPSTREAM:-https://host.docker.internal:27124}
+      NGINX_ENVS: IGNIS_UPSTREAM,OBSIDIAN_REST_UPSTREAM
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
